@@ -1,5 +1,6 @@
 use clap::Parser;
 use colored::Colorize;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -19,61 +20,107 @@ struct Cli {
     path: PathBuf,
 }
 
-/// Categorizes a file path into a logical folder name without using regular expressions.
-fn get_category(path: &Path) -> &'static str {
-    // Check compound archive extensions first (e.g. .tar.gz, .tar.bz2, .tar.xz)
-    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-        let name_lower = file_name.to_lowercase();
-        if name_lower.ends_with(".tar.gz")
-            || name_lower.ends_with(".tar.bz2")
-            || name_lower.ends_with(".tar.xz")
-            || name_lower.ends_with(".tar.zst")
-        {
-            return "Archives";
+/// Logical category for organized files.
+///
+/// Implements `type-no-stringly` by replacing magic strings with a strongly-typed,
+/// exhaustive enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Category {
+    Images,
+    Documents,
+    Videos,
+    Audio,
+    Archives,
+    Code,
+    Misc,
+}
+
+impl Category {
+    /// Returns the static directory name corresponding to this category.
+    #[inline]
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Images => "Images",
+            Self::Documents => "Documents",
+            Self::Videos => "Videos",
+            Self::Audio => "Audio",
+            Self::Archives => "Archives",
+            Self::Code => "Code",
+            Self::Misc => "Misc",
         }
     }
 
-    // Standard extension extraction using std::path::Path::extension
-    let ext = match path.extension().and_then(|e| e.to_str()) {
-        Some(e) => e.to_lowercase(),
-        None => return "Misc",
-    };
-
-    match ext.as_str() {
-        // Images
-        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "svg" | "ico" | "tiff" | "tif"
-        | "heic" | "avif" | "raw" => "Images",
-
-        // Documents
-        "pdf" | "docx" | "doc" | "txt" | "rtf" | "odt" | "xlsx" | "xls" | "ods" | "pptx"
-        | "ppt" | "odp" | "csv" | "tsv" | "md" => "Documents",
-
-        // Videos
-        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg"
-        | "3gp" => "Videos",
-
-        // Audio
-        "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "opus" | "alac" | "aiff" => {
-            "Audio"
+    /// Identifies the category for a given path based on its filename and extension.
+    ///
+    /// Follows `name-no-get-prefix` by using idiomatic constructor naming `from_path`
+    /// rather than `get_category`.
+    #[must_use]
+    pub fn from_path(path: &Path) -> Self {
+        // Check compound archive extensions first (e.g., .tar.gz, .tar.bz2, .tar.xz)
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            let name_lower = file_name.to_lowercase();
+            if name_lower.ends_with(".tar.gz")
+                || name_lower.ends_with(".tar.bz2")
+                || name_lower.ends_with(".tar.xz")
+                || name_lower.ends_with(".tar.zst")
+            {
+                return Self::Archives;
+            }
         }
 
-        // Archives
-        "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "tgz" | "tbz2" | "iso" => {
-            "Archives"
+        // Standard extension extraction using std::path::Path::extension
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            return Self::Misc;
+        };
+
+        let ext_lower = ext.to_lowercase();
+        match ext_lower.as_str() {
+            // Images
+            "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "svg" | "ico" | "tiff" | "tif"
+            | "heic" | "avif" | "raw" => Self::Images,
+
+            // Documents
+            "pdf" | "docx" | "doc" | "txt" | "rtf" | "odt" | "xlsx" | "xls" | "ods" | "pptx"
+            | "ppt" | "odp" | "csv" | "tsv" | "md" => Self::Documents,
+
+            // Videos
+            "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg"
+            | "3gp" => Self::Videos,
+
+            // Audio
+            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "opus" | "alac"
+            | "aiff" => Self::Audio,
+
+            // Archives
+            "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "tgz" | "tbz2"
+            | "iso" => Self::Archives,
+
+            // Code & Scripts
+            "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "html" | "htm" | "css" | "scss"
+            | "json" | "xml" | "yaml" | "yml" | "toml" | "c" | "cpp" | "h" | "hpp" | "cs"
+            | "go" | "java" | "kt" | "swift" | "php" | "rb" | "sh" | "bash" | "zsh" | "sql" => {
+                Self::Code
+            }
+
+            // Unrecognized extensions
+            _ => Self::Misc,
         }
+    }
+}
 
-        // Code & Scripts
-        "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "html" | "htm" | "css" | "scss" | "json"
-        | "xml" | "yaml" | "yml" | "toml" | "c" | "cpp" | "h" | "hpp" | "cs" | "go" | "java"
-        | "kt" | "swift" | "php" | "rb" | "sh" | "bash" | "zsh" | "sql" => "Code",
-
-        // Unrecognized extensions go to Misc
-        _ => "Misc",
+impl fmt::Display for Category {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
 /// Generates a non-colliding destination path if a file with the same name already exists.
-fn get_unique_destination(target_path: PathBuf) -> PathBuf {
+///
+/// Follows `name-no-get-prefix` (renamed from `get_unique_destination`),
+/// `pat-let-else` for concise pattern binding, and avoids unnecessary allocations.
+#[must_use]
+fn unique_destination(target_path: PathBuf) -> PathBuf {
     if !target_path.exists() {
         return target_path;
     }
@@ -86,42 +133,33 @@ fn get_unique_destination(target_path: PathBuf) -> PathBuf {
     let file_stem = target_path
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("file")
-        .to_string();
+        .unwrap_or("file");
 
     // Check if the original name had a compound extension like .tar.gz
-    let (stem, ext_suffix) =
-        if let Some(file_name) = target_path.file_name().and_then(|s| s.to_str()) {
-            let lower = file_name.to_lowercase();
-            if lower.ends_with(".tar.gz") {
-                let stem_part = &file_name[..file_name.len() - ".tar.gz".len()];
-                (stem_part.to_string(), ".tar.gz".to_string())
-            } else if lower.ends_with(".tar.bz2") {
-                let stem_part = &file_name[..file_name.len() - ".tar.bz2".len()];
-                (stem_part.to_string(), ".tar.bz2".to_string())
-            } else if lower.ends_with(".tar.xz") {
-                let stem_part = &file_name[..file_name.len() - ".tar.xz".len()];
-                (stem_part.to_string(), ".tar.xz".to_string())
-            } else {
-                let ext = target_path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|e| format!(".{}", e))
-                    .unwrap_or_default();
-                (file_stem, ext)
-            }
+    let (stem, ext_suffix) = if let Some(file_name) = target_path.file_name().and_then(|s| s.to_str())
+    {
+        let lower = file_name.to_lowercase();
+        if lower.ends_with(".tar.gz") {
+            (&file_name[..file_name.len() - ".tar.gz".len()], ".tar.gz")
+        } else if lower.ends_with(".tar.bz2") {
+            (&file_name[..file_name.len() - ".tar.bz2".len()], ".tar.bz2")
+        } else if lower.ends_with(".tar.xz") {
+            (&file_name[..file_name.len() - ".tar.xz".len()], ".tar.xz")
         } else {
             let ext = target_path
                 .extension()
                 .and_then(|s| s.to_str())
-                .map(|e| format!(".{}", e))
-                .unwrap_or_default();
+                .map(|_| &file_name[file_stem.len()..])
+                .unwrap_or("");
             (file_stem, ext)
-        };
+        }
+    } else {
+        (file_stem, "")
+    };
 
-    let mut counter = 1;
+    let mut counter = 1usize;
     loop {
-        let candidate_name = format!("{}_{}{}", stem, counter, ext_suffix);
+        let candidate_name = format!("{stem}_{counter}{ext_suffix}");
         let candidate_path = parent.join(&candidate_name);
         if !candidate_path.exists() {
             return candidate_path;
@@ -130,7 +168,12 @@ fn get_unique_destination(target_path: PathBuf) -> PathBuf {
     }
 }
 
-/// Moves a file from `src` to `dst`, with fallback for cross-device moves.
+/// Moves a file from `src` to `dst`, with automatic fallback for cross-device moves.
+///
+/// # Errors
+///
+/// Returns an `io::Error` if the file cannot be moved, copied, or deleted due to
+/// permission errors or filesystem locks.
 fn move_file(src: &Path, dst: &Path) -> io::Result<()> {
     if let Err(err) = fs::rename(src, dst) {
         // If files are on different filesystems/devices, fall back to copy then remove
@@ -148,7 +191,7 @@ fn main() {
     let cli = Cli::parse();
     let target_dir = &cli.path;
 
-    // Validate that the target path exists
+    // Validate that your target path exists
     if !target_dir.exists() {
         eprintln!(
             "{} Your specified target directory '{}' does not exist.",
@@ -158,7 +201,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Validate that the target path is actually a directory
+    // Validate that your target path is actually a directory
     if !target_dir.is_dir() {
         eprintln!(
             "{} Your specified path '{}' is a file, not a directory.",
@@ -174,7 +217,7 @@ fn main() {
         target_dir.display()
     );
 
-    // Read the contents of the target directory
+    // Read the contents of your target directory
     let read_dir = match fs::read_dir(target_dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -192,36 +235,34 @@ fn main() {
     let mut warning_count: usize = 0;
 
     for entry_result in read_dir {
-        // Non-panicking entry handling
-        let entry = match entry_result {
-            Ok(e) => e,
-            Err(err) => {
+        // Non-panicking entry handling using pat-let-else
+        let Ok(entry) = entry_result else {
+            if let Err(err) = entry_result {
                 eprintln!(
                     "{} Could not read a directory entry in your target directory '{}': {}",
                     "Warning:".yellow().bold(),
                     target_dir.display(),
                     err
                 );
-                warning_count += 1;
-                continue;
             }
+            warning_count += 1;
+            continue;
         };
 
         let file_path = entry.path();
 
-        // Query file type without following symlinks first
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(err) => {
+        // Query file type without following symlinks first (pat-let-else)
+        let Ok(file_type) = entry.file_type() else {
+            if let Err(err) = entry.file_type() {
                 eprintln!(
                     "{} Could not determine file type for your item '{}': {}",
                     "Warning:".yellow().bold(),
                     file_path.display(),
                     err
                 );
-                warning_count += 1;
-                continue;
             }
+            warning_count += 1;
+            continue;
         };
 
         // Skip directories: Ensure the tool only attempts to move files, ignoring nested directories
@@ -241,15 +282,14 @@ fn main() {
             continue;
         }
 
-        // Get the file name
-        let file_name = match file_path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned(),
-            None => continue,
+        // Get the file name using pat-let-else
+        let Some(file_name) = file_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
         };
 
-        // Categorize file based on extension
-        let category = get_category(&file_path);
-        let category_dir = target_dir.join(category);
+        // Categorize file based on extension using strongly-typed Category enum
+        let category = Category::from_path(&file_path);
+        let category_dir = target_dir.join(category.as_str());
 
         // Check if the target subdirectory exists, create it if it doesn't
         if !category_dir.exists() {
@@ -267,9 +307,12 @@ fn main() {
         }
 
         // Determine destination path and handle possible filename collisions safely
-        let default_destination = category_dir.join(&file_name);
-        let final_destination = get_unique_destination(default_destination.clone());
-        let was_renamed = final_destination != default_destination;
+        let default_destination = category_dir.join(file_name);
+        let final_destination = unique_destination(default_destination);
+        let was_renamed = final_destination
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name != file_name);
 
         // Move the file with non-panicking error handling
         match move_file(&file_path, &final_destination) {
@@ -309,7 +352,7 @@ fn main() {
         }
     }
 
-    // Print clear summary for the user
+    // Print clear summary for you
     println!();
     if moved_count > 0 {
         println!(
@@ -331,5 +374,81 @@ fn main() {
             "Notice:".yellow().bold(),
             warning_count
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_categorize_images() {
+        assert_eq!(Category::from_path(Path::new("pic.jpg")), Category::Images);
+        assert_eq!(Category::from_path(Path::new("PIC.PNG")), Category::Images);
+        assert_eq!(Category::from_path(Path::new("logo.webp")), Category::Images);
+        assert_eq!(Category::from_path(Path::new("icon.svg")), Category::Images);
+    }
+
+    #[test]
+    fn test_categorize_documents() {
+        assert_eq!(Category::from_path(Path::new("doc.pdf")), Category::Documents);
+        assert_eq!(Category::from_path(Path::new("notes.txt")), Category::Documents);
+        assert_eq!(Category::from_path(Path::new("sheet.xlsx")), Category::Documents);
+        assert_eq!(Category::from_path(Path::new("readme.md")), Category::Documents);
+    }
+
+    #[test]
+    fn test_categorize_videos() {
+        assert_eq!(Category::from_path(Path::new("clip.mp4")), Category::Videos);
+        assert_eq!(Category::from_path(Path::new("movie.mkv")), Category::Videos);
+    }
+
+    #[test]
+    fn test_categorize_audio() {
+        assert_eq!(Category::from_path(Path::new("song.mp3")), Category::Audio);
+        assert_eq!(Category::from_path(Path::new("track.flac")), Category::Audio);
+    }
+
+    #[test]
+    fn test_categorize_compound_archives() {
+        assert_eq!(Category::from_path(Path::new("archive.tar.gz")), Category::Archives);
+        assert_eq!(Category::from_path(Path::new("backup.tar.bz2")), Category::Archives);
+        assert_eq!(Category::from_path(Path::new("dist.tar.xz")), Category::Archives);
+        assert_eq!(Category::from_path(Path::new("plain.zip")), Category::Archives);
+        assert_eq!(Category::from_path(Path::new("data.tar")), Category::Archives);
+    }
+
+    #[test]
+    fn test_categorize_code() {
+        assert_eq!(Category::from_path(Path::new("main.rs")), Category::Code);
+        assert_eq!(Category::from_path(Path::new("script.py")), Category::Code);
+        assert_eq!(Category::from_path(Path::new("index.ts")), Category::Code);
+    }
+
+    #[test]
+    fn test_categorize_misc_and_unrecognized() {
+        assert_eq!(Category::from_path(Path::new("unknown.xyz123")), Category::Misc);
+        assert_eq!(Category::from_path(Path::new("LICENSE")), Category::Misc);
+        assert_eq!(Category::from_path(Path::new(".gitignore")), Category::Misc);
+    }
+
+    #[test]
+    fn test_unique_destination_no_collision() {
+        let path = PathBuf::from("non_existent_unique_file_xyz.txt");
+        assert_eq!(unique_destination(path.clone()), path);
+    }
+
+    #[test]
+    fn test_unique_destination_with_collision() {
+        let temp_dir = std::env::temp_dir().join("filezen_test_collision");
+        let _ = fs::create_dir_all(&temp_dir);
+        let orig_file = temp_dir.join("test_item.txt");
+        fs::write(&orig_file, b"content").unwrap();
+
+        let resolved = unique_destination(orig_file.clone());
+        assert_eq!(resolved, temp_dir.join("test_item_1.txt"));
+
+        let _ = fs::remove_file(&orig_file);
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
