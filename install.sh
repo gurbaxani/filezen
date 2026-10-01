@@ -97,13 +97,8 @@ if [ "${DOWNLOADED}" -eq 1 ] && [ -f "${TMP_DIR}/${BINARY_NAME}" ]; then
     install -m 755 "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
 elif command -v cargo >/dev/null 2>&1; then
     warn "Pre-built binary release asset not found for ${TARGET}. Falling back to cargo install..."
-    # Always pass --force to overwrite existing binary on install/upgrade
+    # Always pass --force to cleanly overwrite/upgrade existing binary
     cargo install --git "https://github.com/${REPO}" --root "${INSTALL_DIR}/.." --force
-    CARGO_BIN="$(cd "${INSTALL_DIR}/../bin" 2>/dev/null && pwd || true)"
-    TARGET_BIN="$(cd "${INSTALL_DIR}" 2>/dev/null && pwd || true)"
-    if [ -n "${CARGO_BIN}" ] && [ -f "${CARGO_BIN}/${BINARY_NAME}" ] && [ "${CARGO_BIN}" != "${TARGET_BIN}" ]; then
-        install -m 755 "${CARGO_BIN}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-    fi
 else
     error "Could not download pre-compiled binary for ${TARGET} and cargo is not installed. Please visit https://github.com/${REPO}/releases to download your platform's binary directly."
 fi
