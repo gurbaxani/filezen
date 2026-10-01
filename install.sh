@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # FileZen Universal Installer
-# Enables anyone to install FileZen with a single command:
+# Enables anyone to install or update FileZen with a single command:
 #   curl -fsSL https://raw.githubusercontent.com/gurbaxani/filezen/trunk/install.sh | bash
 
 set -euo pipefail
@@ -81,24 +81,28 @@ RELEASE_URL="https://github.com/${REPO}/releases/latest/download/filezen-${TARGE
 DOWNLOADED=0
 if command -v curl >/dev/null 2>&1; then
     if curl -fsSL "${RELEASE_URL}" -o "${TMP_DIR}/filezen.tar.gz" 2>/dev/null; then
-        tar -xzf "${TMP_DIR}/filezen.tar.gz" -C "${TMP_DIR}"
-        DOWNLOADED=1
+        if tar -xzf "${TMP_DIR}/filezen.tar.gz" -C "${TMP_DIR}" 2>/dev/null; then
+            DOWNLOADED=1
+        fi
     fi
 elif command -v wget >/dev/null 2>&1; then
     if wget -qO "${TMP_DIR}/filezen.tar.gz" "${RELEASE_URL}" 2>/dev/null; then
-        tar -xzf "${TMP_DIR}/filezen.tar.gz" -C "${TMP_DIR}"
-        DOWNLOADED=1
+        if tar -xzf "${TMP_DIR}/filezen.tar.gz" -C "${TMP_DIR}" 2>/dev/null; then
+            DOWNLOADED=1
+        fi
     fi
 fi
 
 if [ "${DOWNLOADED}" -eq 1 ] && [ -f "${TMP_DIR}/${BINARY_NAME}" ]; then
-    cp "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    install -m 755 "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
 elif command -v cargo >/dev/null 2>&1; then
     warn "Pre-built binary release asset not found for ${TARGET}. Falling back to cargo install..."
-    cargo install --git "https://github.com/${REPO}" --root "${INSTALL_DIR}/.."
-    if [ -f "${INSTALL_DIR}/../bin/${BINARY_NAME}" ] && [ "${INSTALL_DIR}" != "${INSTALL_DIR}/../bin" ]; then
-        cp -f "${INSTALL_DIR}/../bin/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+    # Always pass --force to overwrite existing binary on install/upgrade
+    cargo install --git "https://github.com/${REPO}" --root "${INSTALL_DIR}/.." --force
+    CARGO_BIN="$(cd "${INSTALL_DIR}/../bin" 2>/dev/null && pwd || true)"
+    TARGET_BIN="$(cd "${INSTALL_DIR}" 2>/dev/null && pwd || true)"
+    if [ -n "${CARGO_BIN}" ] && [ -f "${CARGO_BIN}/${BINARY_NAME}" ] && [ "${CARGO_BIN}" != "${TARGET_BIN}" ]; then
+        install -m 755 "${CARGO_BIN}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
     fi
 else
     error "Could not download pre-compiled binary for ${TARGET} and cargo is not installed. Please visit https://github.com/${REPO}/releases to download your platform's binary directly."
