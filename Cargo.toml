@@ -1,0 +1,8 @@
+[package]
+name = "filezen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+colored = "3.1.1"
